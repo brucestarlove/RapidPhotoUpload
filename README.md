@@ -8,7 +8,7 @@ High-volume asynchronous media upload backend built with Spring Boot 3.4+, AWS S
 
 `mvn spring-boot:run`
 
-(((some first time things for AWS
+some first time things for AWS:
 `terraform plan` with a lot of LLM's refinement for reasons including me manually creating the S3 and Aurora PostgreSQL, to eventually `terraform apply`
 
 using AWS Systems Manager Session Manager (SSM) instead of SSH keys
@@ -31,22 +31,6 @@ created `/etc/systemd/system/rapidupload.service` and `/opt/rapidupload/applicat
 
 ### Check status (will show as inactive since we haven't deployed the JAR yet)
 `sudo systemctl status rapidupload`
-
-
-DID NOT YET DO:
-2. Add GitHub Secrets (only 3 needed now)
-AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY
-EC2_INSTANCE_ID
-3. Set IAM permissions for GitHub Actions
-The IAM user/role used by GitHub Actions needs:
-ssm:SendCommand
-ssm:GetCommandInvocation
-ssm:DescribeInstanceInformation
-s3:PutObject / s3:GetObject (for deployments bucket)
-ec2:DescribeInstances (for health check)
-
-)))
 
 1. Build JAR: `JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home mvn clean package -DskipTests`
 2. Deploy JAR: `aws s3 cp target/rapidupload-*.jar s3://starscape-rapidphotoupload/deployments/latest.jar --profile gauntlet` (gauntlet = my ~/.aws/config profile)

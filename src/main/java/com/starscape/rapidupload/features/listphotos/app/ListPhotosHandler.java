@@ -101,23 +101,25 @@ public class ListPhotosHandler {
             try {
                 // Generate presigned URL for 256px thumbnail
                 String thumbnailKey = getThumbnailKey(photo.getS3Key(), 256);
+                log.debug("Generating presigned URL for thumbnail: bucket={}, key={}", bucket, thumbnailKey);
                 thumbnailUrl = generatePresignedGetUrl(thumbnailKey);
-                log.debug("Generated thumbnail URL for photo {}: {}", photo.getPhotoId(), thumbnailUrl);
+                log.info("✅ Generated presigned thumbnail URL for photo {}: {}", photo.getPhotoId(), thumbnailUrl);
             } catch (Exception e) {
                 // If thumbnail doesn't exist or generation fails, try full image as fallback
-                log.warn("Failed to generate thumbnail URL for photo {}: {}. Falling back to full image.", 
-                    photo.getPhotoId(), e.getMessage());
+                log.warn("❌ Failed to generate thumbnail URL for photo {}: {}. Falling back to full image.", 
+                    photo.getPhotoId(), e.getMessage(), e);
                 try {
                     // Fallback to full image if thumbnail doesn't exist yet
                     thumbnailUrl = generatePresignedGetUrl(photo.getS3Key());
+                    log.info("✅ Generated fallback presigned URL for photo {}: {}", photo.getPhotoId(), thumbnailUrl);
                 } catch (Exception e2) {
-                    log.error("Failed to generate fallback image URL for photo {}: {}", 
-                        photo.getPhotoId(), e2.getMessage());
+                    log.error("❌ Failed to generate fallback image URL for photo {}: {}", 
+                        photo.getPhotoId(), e2.getMessage(), e2);
                     thumbnailUrl = null;
                 }
             }
         } else {
-            log.debug("Skipping thumbnail URL generation for photo {}: status={}, s3Key={}", 
+            log.debug("⏭️ Skipping thumbnail URL generation for photo {}: status={}, s3Key={}", 
                 photo.getPhotoId(), photo.getStatus(), photo.getS3Key());
         }
         
@@ -153,6 +155,18 @@ public class ListPhotosHandler {
      * Generate presigned GET URL for S3 object.
      */
     private String generatePresignedGetUrl(String s3Key) {
+        if (s3Presigner == null) {
+            log.error("❌ S3Presigner is null! Cannot generate presigned URL.");
+            throw new IllegalStateException("S3Presigner is not configured");
+        }
+        
+        if (bucket == null || bucket.isBlank()) {
+            log.error("❌ S3 bucket is not configured!");
+            throw new IllegalStateException("S3 bucket is not configured");
+        }
+        
+        log.debug("Generating presigned URL: bucket={}, key={}", bucket, s3Key);
+        
         GetObjectRequest getRequest = GetObjectRequest.builder()
                 .bucket(bucket)
                 .key(s3Key)
@@ -164,7 +178,9 @@ public class ListPhotosHandler {
                 .build();
         
         PresignedGetObjectRequest presigned = s3Presigner.presignGetObject(presignRequest);
-        return presigned.url().toString();
+        String url = presigned.url().toString();
+        log.debug("Generated presigned URL: {}", url);
+        return url;
     }
 }
 

@@ -1,5 +1,7 @@
 package com.starscape.rapidupload.features.uploadphoto.app;
 
+import com.starscape.rapidupload.common.config.ProcessingProperties;
+import com.starscape.rapidupload.common.exception.BusinessException;
 import com.starscape.rapidupload.common.outbox.OutboxService;
 import com.starscape.rapidupload.features.uploadphoto.api.dto.*;
 import com.starscape.rapidupload.features.uploadphoto.domain.*;
@@ -25,6 +27,7 @@ public class CreateUploadJobHandler {
     private final S3PresignService s3PresignService;
     private final S3MultipartPresignService s3MultipartPresignService;
     private final OutboxService outboxService;
+    private final ProcessingProperties processingProperties;
     private final String environment;
     
     public CreateUploadJobHandler(
@@ -33,12 +36,14 @@ public class CreateUploadJobHandler {
             S3PresignService s3PresignService,
             S3MultipartPresignService s3MultipartPresignService,
             OutboxService outboxService,
+            ProcessingProperties processingProperties,
             @Value("${spring.profiles.active:dev}") String environment) {
         this.uploadJobRepository = uploadJobRepository;
         this.photoRepository = photoRepository;
         this.s3PresignService = s3PresignService;
         this.s3MultipartPresignService = s3MultipartPresignService;
         this.outboxService = outboxService;
+        this.processingProperties = processingProperties;
         // Handle multiple profiles (comma-separated) by taking the first one
         this.environment = environment != null && environment.contains(",") 
             ? environment.split(",")[0].trim() 
@@ -58,6 +63,15 @@ public class CreateUploadJobHandler {
             
             // Create photos and generate presigned URLs
             for (FileUploadRequest fileRequest : request.files()) {
+                // Validate MIME type against supported formats
+                if (!processingProperties.isSupportedFormat(fileRequest.mimeType())) {
+                    throw new BusinessException(
+                        "UNSUPPORTED_MIME_TYPE",
+                        String.format("Unsupported MIME type: %s. Supported formats: %s", 
+                            fileRequest.mimeType(), 
+                            String.join(", ", processingProperties.getSupportedFormats()))
+                    );
+                }
                 String photoId = "ph_" + UUID.randomUUID().toString().replace("-", "");
                 Photo photo = new Photo(
                     photoId,

@@ -20,6 +20,14 @@ import java.util.List;
 /**
  * Aggregates photo processing events to update UploadJob progress.
  * Processes outbox events periodically and updates job status based on photo completion/failure.
+ * 
+ * Responsibilities:
+ * - Reads unprocessed outbox events (PhotoProcessingCompleted, PhotoFailed)
+ * - Updates UploadJob aggregate state (progress counts, status)
+ * - Marks events as processed after successful handling
+ * 
+ * Note: This service focuses on domain state updates. For real-time WebSocket broadcasts,
+ * see PhotoEventListener and JobEventListener in the trackprogress feature.
  */
 @Service
 public class JobProgressAggregator {

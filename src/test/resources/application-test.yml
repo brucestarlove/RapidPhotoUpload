@@ -61,10 +61,11 @@ app:
     thumbnail-sizes:
       - 256
       - 1024
-    max-image-dimension: 8192
     supported-formats:
       - image/jpeg
       - image/png
       - image/gif
       - image/webp
+  websocket:
+    allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:*}
 

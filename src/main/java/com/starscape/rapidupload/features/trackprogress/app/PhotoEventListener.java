@@ -21,6 +21,17 @@ import java.util.List;
 /**
  * Listens to photo domain events and broadcasts progress updates via WebSocket.
  * Processes outbox events to send real-time updates to subscribed clients.
+ * 
+ * Responsibilities:
+ * - Reads unprocessed outbox events (PhotoQueued, PhotoProcessingCompleted, PhotoFailed)
+ * - Broadcasts progress updates via WebSocket to subscribed clients
+ * - Does NOT mark events as processed (JobProgressAggregator handles that)
+ * 
+ * Architecture Note:
+ * This service and JobProgressAggregator both read from the same outbox events.
+ * This is intentional - events are broadcast for real-time updates while also being
+ * processed for domain state updates. Events may be broadcast multiple times, which
+ * is acceptable for idempotent progress updates.
  */
 @Service
 public class PhotoEventListener {

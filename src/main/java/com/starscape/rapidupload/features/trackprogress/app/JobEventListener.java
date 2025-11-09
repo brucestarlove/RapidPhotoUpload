@@ -20,6 +20,16 @@ import java.util.Set;
 /**
  * Listens to job-related events and broadcasts job status updates via WebSocket.
  * Tracks jobs that have recent photo events and broadcasts their status.
+ * 
+ * Responsibilities:
+ * - Monitors outbox events to identify jobs with recent photo activity
+ * - Broadcasts job-level status updates (total, completed, failed counts)
+ * - Uses caching to avoid excessive broadcasts for the same job
+ * 
+ * Architecture Note:
+ * This complements PhotoEventListener (photo-level updates) and JobProgressAggregator
+ * (domain state updates). All three services read from the same outbox, each serving
+ * a different purpose in the CQRS architecture.
  */
 @Service
 public class JobEventListener {

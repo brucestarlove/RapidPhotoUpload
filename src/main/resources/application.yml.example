@@ -1,6 +1,6 @@
 spring:
   application:
-    name: rapidupload
+    name: starscaperapidphotoupload
   
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:rapidupload}
@@ -39,15 +39,15 @@ management:
       show-details: when-authorized
 
 aws:
-  region: ${AWS_REGION:us-east-1}
+  region: ${AWS_REGION:us-east-2}
   s3:
-    bucket: ${S3_BUCKET:rapidupload-media-dev}
+    bucket: ${S3_BUCKET:starscape-rapidphotoupload}
     presign-duration-minutes: 15
 
 app:
   security:
     jwt:
-      secret: ${JWT_SECRET:change-this-in-production-minimum-256-bits-required-for-hs256-algorithm}
+      secret: ${JWT_SECRET:change-this-in-production}
       expiration-ms: 86400000  # 24 hours
-      issuer: rapidupload-api
+      issuer: starscape-rapidphotoupload-api
 

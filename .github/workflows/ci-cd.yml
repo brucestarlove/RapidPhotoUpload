@@ -178,7 +178,9 @@ jobs:
       
       - name: Health check
         run: |
-          sleep 10
+          # Wait a bit for the service to start
+          sleep 15
+          
           EC2_IP=$(aws ec2 describe-instances \
             --instance-ids ${{ secrets.EC2_INSTANCE_ID }} \
             --query 'Reservations[0].Instances[0].PublicIpAddress' \
@@ -186,14 +188,67 @@ jobs:
           
           echo "Checking health endpoint: http://$EC2_IP:8080/actuator/health"
           
-          for i in {1..30}; do
-            if curl -f http://$EC2_IP:8080/actuator/health; then
+          # Check if service is running on EC2 first
+          echo "Verifying service status on EC2..."
+          SERVICE_STATUS=$(aws ssm send-command \
+            --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["sudo systemctl is-active rapidupload || echo inactive"]' \
+            --output text \
+            --query "Command.CommandId")
+          
+          # Wait for command and get result
+          sleep 3
+          SERVICE_RESULT=$(aws ssm list-command-invocations \
+            --command-id "$SERVICE_STATUS" \
+            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+            --details \
+            --query "CommandInvocations[0].CommandPlugins[0].Output" \
+            --output text 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+          
+          echo "Service status: $SERVICE_RESULT"
+          
+          # Health check with timeout to prevent infinite loops
+          MAX_ATTEMPTS=30
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            # Use curl with timeout flags: --max-time for total timeout, --connect-timeout for connection
+            if curl -f --max-time 10 --connect-timeout 5 --silent --show-error \
+               http://$EC2_IP:8080/actuator/health > /dev/null 2>&1; then
               echo "✅ Application is healthy!"
               exit 0
             fi
-            echo "Waiting for application to start... ($i/30)"
+            
+            # Only print every 5th attempt to reduce noise
+            if [ $((i % 5)) -eq 0 ] || [ $i -eq 1 ]; then
+              echo "Waiting for application to start... ($i/$MAX_ATTEMPTS)"
+            fi
+            
+            # Exit early if we've exceeded reasonable time (30 attempts * 5s = 150s = 2.5min)
+            if [ $i -ge $MAX_ATTEMPTS ]; then
+              break
+            fi
+            
             sleep 5
           done
           
-          echo "❌ Health check failed"
+          echo "❌ Health check failed after $MAX_ATTEMPTS attempts"
+          echo "Last service status: $SERVICE_RESULT"
+          echo "Attempting to get service logs for debugging..."
+          
+          # Try to get recent logs for debugging
+          LOGS_CMD_ID=$(aws ssm send-command \
+            --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["sudo journalctl -u rapidupload -n 50 --no-pager"]' \
+            --output text \
+            --query "Command.CommandId")
+          
+          sleep 3
+          aws ssm list-command-invocations \
+            --command-id "$LOGS_CMD_ID" \
+            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+            --details \
+            --query "CommandInvocations[0].CommandPlugins[0].Output" \
+            --output text 2>/dev/null || echo "Could not retrieve logs"
+          
           exit 1

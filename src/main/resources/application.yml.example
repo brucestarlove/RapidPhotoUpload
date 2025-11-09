@@ -28,6 +28,20 @@ spring:
     enabled: true
     locations: classpath:db/migration
     baseline-on-migrate: true
+  
+  cloud:
+    aws:
+      region:
+        static: ${AWS_REGION:us-east-2}
+      credentials:
+        profile:
+          name: ${AWS_PROFILE:}
+      sqs:
+        enabled: true
+        listener:
+          max-concurrent-messages: 10
+          max-messages-per-poll: 10
+          poll-timeout: 20
 
 management:
   endpoints:
@@ -40,9 +54,13 @@ management:
 
 aws:
   region: ${AWS_REGION:us-east-2}
+  profile: ${AWS_PROFILE:}  # Optional: specify AWS profile (e.g., "gauntlet") from ~/.aws/credentials
   s3:
     bucket: ${S3_BUCKET:starscape-rapidphotoupload}
     presign-duration-minutes: 15
+  sqs:
+    queue-url: ${SQS_QUEUE_URL:https://sqs.us-east-1.amazonaws.com/123456789/rapidupload-photo-processing-dev}
+    dlq-url: ${SQS_DLQ_URL:}
 
 app:
   security:
@@ -50,4 +68,14 @@ app:
       secret: ${JWT_SECRET:change-this-in-production}
       expiration-ms: 86400000  # 24 hours
       issuer: starscape-rapidphotoupload-api
+  processing:
+    thumbnail-sizes:
+      - 256
+      - 1024
+    max-image-dimension: 8192
+    supported-formats:
+      - image/jpeg
+      - image/png
+      - image/gif
+      - image/webp
 

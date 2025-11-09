@@ -11,7 +11,10 @@ spring:
       minimum-idle: 5
       connection-timeout: 30000
       idle-timeout: 600000
-      max-lifetime: 1800000
+      # max-lifetime should be ~2-3 minutes less than database idle timeout
+      # Aurora PostgreSQL Serverless v2 default idle timeout is ~10-15 minutes
+      # Setting to 10 minutes (600000ms) to avoid connection validation warnings
+      max-lifetime: 600000
   
   jpa:
     hibernate:

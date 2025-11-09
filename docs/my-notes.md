@@ -1,0 +1,10 @@
+- setting up Aurora RDS postgresql
+  - choosing Serverless v2 for "pay only for capacity consumed" and for "variable, unpredictable workloads"
+  - not initially connecting to EC2 instance, will later (or Docker ? same thing ?)
+  - initial public access for local dev
+  - initially NOT using RDS Data API for HTTP SQL queries (maybe i can just peek in?)
+- S3
+  - initial Block all public access
+  - Bucket type General Purpose
+  - starscaperapidphotoupload--use2-az1--x-s3
+  - 

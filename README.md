@@ -2,6 +2,69 @@
 
 High-volume asynchronous media upload backend built with Spring Boot 3.4+, AWS S3, PostgreSQL, and following DDD/CQRS/VSA principles.
 
+## Dev & Deploy
+
+`mvn clean install`
+
+`mvn spring-boot:run`
+
+(((some first time things for AWS
+`terraform plan` with a lot of LLM's refinement for reasons including me manually creating the S3 and Aurora PostgreSQL, to eventually `terraform apply`
+
+using AWS Systems Manager Session Manager (SSM) instead of SSH keys
+
+`aws ssm start-session --target i-040798390b54b4294 --profile gauntlet`
+
+created `/etc/systemd/system/rapidupload.service` and `/opt/rapidupload/application-prod.yml`
+
+`sudo chown ec2-user:ec2-user /opt/rapidupload/application-prod.yml`
+`sudo chmod 600 /opt/rapidupload/application-prod.yml`
+
+`sudo chown -R ec2-user:ec2-user /opt/rapidupload`
+`sudo chmod 755 /opt/rapidupload`
+
+# Reload systemd
+`sudo systemctl daemon-reload`
+
+# Enable service (starts on boot)
+`sudo systemctl enable rapidupload`
+
+# Check status (will show as inactive since we haven't deployed the JAR yet)
+`sudo systemctl status rapidupload`
+
+
+DID NOT YET DO:
+2. Add GitHub Secrets (only 3 needed now)
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+EC2_INSTANCE_ID
+3. Set IAM permissions for GitHub Actions
+The IAM user/role used by GitHub Actions needs:
+ssm:SendCommand
+ssm:GetCommandInvocation
+ssm:DescribeInstanceInformation
+s3:PutObject / s3:GetObject (for deployments bucket)
+ec2:DescribeInstances (for health check)
+
+)))
+
+1. Build JAR: `JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home mvn clean package -DskipTests`
+2. Deploy JAR: `aws s3 cp target/rapidupload-*.jar s3://starscape-rapidphotoupload/deployments/latest.jar --profile gauntlet` (gauntlet = my ~/.aws/config profile)
+
+3. # Download JAR from S3 to home directory, then move
+  1. `aws s3 cp s3://starscape-rapidphotoupload/deployments/latest.jar ~/app.jar`
+  2. `sudo mv ~/app.jar /opt/rapidupload/app.jar`
+  3. `sudo chown ec2-user:ec2-user /opt/rapidupload/app.jar`
+
+# Start the service
+sudo systemctl start rapidupload
+
+# Check status
+sudo systemctl status rapidupload
+
+# Watch logs
+sudo journalctl -u rapidupload -f
+
 ## Phase 1: Foundation & Infrastructure ✅
 
 Phase 1 has been successfully implemented with:

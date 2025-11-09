@@ -22,12 +22,15 @@ target/
 application-local.yml
 application-dev.yml
 application-prod.yml
+*application.yml
 
 # Terraform
 *.tfstate
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl
+terraform.tfvars
+*.tfvars.backup
 
 # Environment variables
 .env

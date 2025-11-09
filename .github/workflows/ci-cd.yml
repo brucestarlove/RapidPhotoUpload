@@ -1,0 +1,177 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  AWS_REGION: us-east-2
+  S3_BUCKET: starscape-rapidphotoupload
+  EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: testdb
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+      
+      - name: Run tests
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: testdb
+          DB_USER: test
+          DB_PASSWORD: test
+        run: mvn clean verify
+      
+      - name: Build application JAR
+        run: mvn clean package -DskipTests
+      
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: application-jar
+          path: target/rapidupload-*.jar
+          retention-days: 7
+
+  deploy:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download JAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: application-jar
+          path: target/
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Upload JAR to S3
+        run: |
+          JAR_FILE=$(ls target/rapidupload-*.jar | head -1)
+          JAR_NAME=$(basename $JAR_FILE)
+          aws s3 cp $JAR_FILE s3://${{ env.S3_BUCKET }}/deployments/${{ github.sha }}/$JAR_NAME
+          aws s3 cp $JAR_FILE s3://${{ env.S3_BUCKET }}/deployments/latest.jar
+          echo "JAR_NAME=$JAR_NAME" >> $GITHUB_ENV
+      
+      - name: Deploy to EC2 via SSM
+        run: |
+          # Send deployment commands to EC2 via SSM
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=[
+              "mkdir -p /opt/rapidupload/deployments",
+              "aws s3 cp s3://${{ env.S3_BUCKET }}/deployments/latest.jar /opt/rapidupload/app.jar.new",
+              "sudo systemctl stop rapidupload || true",
+              "if [ -f /opt/rapidupload/app.jar ]; then cp /opt/rapidupload/app.jar /opt/rapidupload/app.jar.backup.$(date +%Y%m%d_%H%M%S); fi",
+              "mv /opt/rapidupload/app.jar.new /opt/rapidupload/app.jar",
+              "sudo chown ec2-user:ec2-user /opt/rapidupload/app.jar",
+              "sudo systemctl start rapidupload || echo \"Service not configured yet\"",
+              "sleep 2",
+              "sudo systemctl status rapidupload --no-pager || true"
+            ]' \
+            --output text \
+            --query "Command.CommandId")
+          
+          echo "Command ID: $COMMAND_ID"
+          
+          # Wait for command to complete (with timeout)
+          echo "Waiting for deployment to complete..."
+          for i in {1..60}; do
+            STATUS=$(aws ssm get-command-invocation \
+              --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+              --command-id "$COMMAND_ID" \
+              --plugin-name "runShellScript" \
+              --query "Status" \
+              --output text 2>/dev/null || echo "InProgress")
+            
+            if [ "$STATUS" = "Success" ] || [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+              break
+            fi
+            
+            echo "Status: $STATUS ($i/60)"
+            sleep 2
+          done
+          
+          # Get and display command output
+          echo "=== Deployment Output ==="
+          aws ssm get-command-invocation \
+            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+            --command-id "$COMMAND_ID" \
+            --plugin-name "runShellScript" \
+            --query "[Status, StandardOutputContent, StandardErrorContent]" \
+            --output text
+          
+          # Fail if command failed
+          FINAL_STATUS=$(aws ssm get-command-invocation \
+            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+            --command-id "$COMMAND_ID" \
+            --plugin-name "runShellScript" \
+            --query "Status" \
+            --output text)
+          
+          if [ "$FINAL_STATUS" != "Success" ]; then
+            echo "❌ Deployment failed with status: $FINAL_STATUS"
+            exit 1
+          fi
+          
+          echo "✅ Deployment completed successfully"
+      
+      - name: Health check
+        run: |
+          sleep 10
+          EC2_IP=$(aws ec2 describe-instances \
+            --instance-ids ${{ secrets.EC2_INSTANCE_ID }} \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)
+          
+          echo "Checking health endpoint: http://$EC2_IP:8080/actuator/health"
+          
+          for i in {1..30}; do
+            if curl -f http://$EC2_IP:8080/actuator/health; then
+              echo "✅ Application is healthy!"
+              exit 0
+            fi
+            echo "Waiting for application to start... ($i/30)"
+            sleep 5
+          done
+          
+          echo "❌ Health check failed"
+          exit 1

@@ -1,0 +1,46 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3DeploymentAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::starscape-rapidphotoupload/deployments/*"
+    },
+    {
+      "Sid": "SSMDeploymentAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:SendCommand",
+        "ssm:GetCommandInvocation",
+        "ssm:WaitCommandExecuted"
+      ],
+      "Resource": "arn:aws:ec2:us-east-2:*:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ssm:resourceTag/Project": "StarscapeRapidPhotoUpload"
+        }
+      }
+    },
+    {
+      "Sid": "SSMDescribeAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:DescribeInstanceInformation"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EC2DescribeAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+

@@ -3,6 +3,8 @@ package com.starscape.rapidupload.features.uploadphoto.domain;
 import com.starscape.rapidupload.common.domain.AggregateRoot;
 import com.starscape.rapidupload.features.uploadphoto.domain.events.PhotoQueued;
 import jakarta.persistence.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.time.Instant;
 
 @Entity
@@ -50,6 +52,7 @@ public class Photo extends AggregateRoot<String> {
     @Column(name = "height")
     private Integer height;
     
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "exif_json", columnDefinition = "jsonb")
     private String exifJson;
     

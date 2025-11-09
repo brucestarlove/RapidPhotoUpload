@@ -5,9 +5,12 @@ This directory contains Terraform configurations for provisioning AWS infrastruc
 ## What's Configured
 
 - **S3 Bucket**: Media storage with versioning, encryption, CORS, and public access blocked
-- **IAM Role**: Application role with S3 permissions
+- **IAM Role**: Application role with S3 and SQS permissions
 - **Aurora Serverless v2**: PostgreSQL cluster with auto-scaling
 - **EC2 Instance**: Application server with security groups
+- **SQS Queue**: Photo processing queue with Dead Letter Queue (DLQ)
+- **EventBridge Rule**: Captures S3 ObjectCreated events and sends to SQS
+- **S3 EventBridge Integration**: Enables EventBridge notifications on S3 bucket
 
 ## Setup
 
@@ -101,6 +104,21 @@ After applying, Terraform will output:
 - `rds_reader_endpoint`: Aurora reader endpoint
 - `ec2_public_ip`: EC2 instance public IP
 - `ec2_public_dns`: EC2 instance public DNS
+- `sqs_queue_url`: SQS queue URL for photo processing (use this in `application.yml`)
+- `sqs_queue_arn`: SQS queue ARN
+- `sqs_dlq_url`: Dead Letter Queue URL
+- `eventbridge_rule_arn`: EventBridge rule ARN for S3 events
+
+### Using SQS Queue URL in Application
+
+After applying Terraform, update your `application.yml`:
+
+```yaml
+aws:
+  sqs:
+    queue-url: <value from terraform output sqs_queue_url>
+    dlq-url: <value from terraform output sqs_dlq_url>
+```
 
 ## Destroying Resources
 

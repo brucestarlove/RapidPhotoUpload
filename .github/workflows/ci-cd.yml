@@ -112,39 +112,61 @@ jobs:
           
           echo "Command ID: $COMMAND_ID"
           
-          # Wait for command to complete (with timeout)
+          # Wait for command to complete using list-command-invocations (more reliable)
           echo "Waiting for deployment to complete..."
-          for i in {1..60}; do
-            STATUS=$(aws ssm get-command-invocation \
-              --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+          for i in {1..90}; do
+            STATUS=$(aws ssm list-command-invocations \
               --command-id "$COMMAND_ID" \
-              --plugin-name "runShellScript" \
-              --query "Status" \
+              --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+              --query "CommandInvocations[0].Status" \
               --output text 2>/dev/null || echo "InProgress")
             
-            if [ "$STATUS" = "Success" ] || [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+            if [ "$STATUS" = "Success" ] || [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
+              echo "Command finished with status: $STATUS"
               break
             fi
             
-            echo "Status: $STATUS ($i/60)"
-            sleep 2
+            if [ "$i" -lt 90 ]; then
+              echo "Status: $STATUS ($i/90)"
+              sleep 2
+            fi
           done
           
-          # Get and display command output
-          echo "=== Deployment Output ==="
-          aws ssm get-command-invocation \
-            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+          # Get command details
+          echo "=== Command Details ==="
+          aws ssm list-command-invocations \
             --command-id "$COMMAND_ID" \
-            --plugin-name "runShellScript" \
-            --query "[Status, StandardOutputContent, StandardErrorContent]" \
-            --output text
+            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+            --details \
+            --query "CommandInvocations[0].[Status,CommandPlugins[0].Output,CommandPlugins[0].OutputS3Bucket,CommandPlugins[0].OutputS3KeyPrefix]" \
+            --output table
           
-          # Fail if command failed
-          FINAL_STATUS=$(aws ssm get-command-invocation \
-            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+          # Get detailed output if available
+          echo "=== Deployment Output ==="
+          OUTPUT=$(aws ssm list-command-invocations \
             --command-id "$COMMAND_ID" \
-            --plugin-name "runShellScript" \
-            --query "Status" \
+            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+            --details \
+            --query "CommandInvocations[0].CommandPlugins[0].Output" \
+            --output text 2>/dev/null || echo "Output not available")
+          
+          if [ -n "$OUTPUT" ] && [ "$OUTPUT" != "None" ]; then
+            echo "$OUTPUT"
+          else
+            echo "Trying alternative method to get output..."
+            aws ssm get-command-invocation \
+              --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+              --command-id "$COMMAND_ID" \
+              --plugin-name "aws:runShellScript" \
+              --query "[Status, StandardOutputContent, StandardErrorContent]" \
+              --output text 2>/dev/null || echo "Could not retrieve output"
+          fi
+          
+          # Check final status
+          FINAL_STATUS=$(aws ssm list-command-invocations \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
+            --query "CommandInvocations[0].Status" \
             --output text)
           
           if [ "$FINAL_STATUS" != "Success" ]; then

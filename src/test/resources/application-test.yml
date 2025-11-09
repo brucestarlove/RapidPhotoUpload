@@ -29,7 +29,8 @@ spring:
         listener:
           max-concurrent-messages: 10
           max-messages-per-poll: 10
-          poll-timeout: 20
+          poll-timeout: 2  # Shorter timeout for tests to prevent hanging
+          shutdown-timeout: 2s  # Shutdown timeout for graceful cleanup
 
 management:
   endpoints:

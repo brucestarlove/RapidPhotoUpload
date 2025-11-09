@@ -206,7 +206,8 @@ public class PhotoProcessingService {
             }
             
         } catch (ImageProcessingException | IOException e) {
-            log.warn("Failed to extract EXIF data", e);
+            // Log at debug level - EXIF extraction failures are expected for invalid/corrupted images
+            log.debug("Failed to extract EXIF data: {}", e.getMessage());
             exifData.put("error", e.getMessage());
         }
         

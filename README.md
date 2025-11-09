@@ -62,38 +62,19 @@ On push to main:
 1. Deploys to EC2 via SSM
 1. Runs health check
 
-
-## Phase 1: Foundation & Infrastructure ✅
-
-Phase 1 has been successfully implemented with:
-
-- ✅ Spring Boot 3.4+ project structure
-- ✅ PostgreSQL database schema (Flyway migrations)
-- ✅ Core domain model (User aggregate, value objects)
-- ✅ JWT authentication
-- ✅ AWS S3 configuration
-- ✅ Terraform infrastructure definitions
-- ✅ Global exception handling
-
 ## Prerequisites
 
 - Java 21+
 - Maven 3.9+ or Gradle 8.5+
 - PostgreSQL 15+ (local or RDS)
-- AWS Account (for S3 and RDS)
+- AWS Account (for S3, RDS, EC2, SQS)
 - Terraform 1.5+ (for infrastructure provisioning)
 
 ## Quick Start
 
 ### 1. Database Setup
 
-Create a PostgreSQL database:
-
-```bash
-createdb rapidupload
-```
-
-Or use environment variables to point to an existing database.
+AWS Aurora PostgreSQL Serverless v2.
 
 ### 2. Configure Application
 
@@ -163,7 +144,7 @@ curl -X POST http://localhost:8080/api/auth/login \
 - `GET /actuator/health` - Application health status
 curl -X GET http://
 
-## Project Structure
+## Project Structure (init)
 
 ```
 com.starscape.rapidupload/
@@ -192,13 +173,6 @@ terraform plan -var-file=environments/dev.tfvars
 terraform apply -var-file=environments/dev.tfvars
 ```
 
-## Next Steps
-
-Phase 1 is complete! Proceed to **Phase 2: Core Upload Flow** to implement:
-- Upload job creation
-- S3 presigned URL generation
-- Transactional outbox pattern
-
 ## Documentation
 
 - [PRD](docs/00-PRD.md) - Product Requirements Document
@@ -207,8 +181,3 @@ Phase 1 is complete! Proceed to **Phase 2: Core Upload Flow** to implement:
 - [Phase 3 Plan](docs/plans/PHASE3.md) - Async Processing Pipeline
 - [Phase 4 Plan](docs/plans/PHASE4.md) - Real-time Progress & Query APIs
 - [Phase 5 Plan](docs/plans/PHASE5.md) - Observability & Production Readiness
-
-## License
-
-Copyright (c) 2024 Starscape
-

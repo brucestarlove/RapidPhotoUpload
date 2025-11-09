@@ -22,6 +22,7 @@ public class GlobalExceptionHandler {
         ex.getBindingResult().getAllErrors().forEach(error -> {
             String fieldName = ((FieldError) error).getField();
             String errorMessage = error.getDefaultMessage();
+            // Spring automatically formats nested errors as "files[0].filename", etc.
             errors.put(fieldName, errorMessage);
         });
         

@@ -2,6 +2,10 @@ package com.starscape.rapidupload.features.listphotos.app;
 
 import com.starscape.rapidupload.features.listphotos.api.dto.PhotoListItem;
 import com.starscape.rapidupload.features.listphotos.api.dto.PhotoListResponse;
+import com.starscape.rapidupload.features.tags.domain.PhotoTag;
+import com.starscape.rapidupload.features.tags.domain.PhotoTagRepository;
+import com.starscape.rapidupload.features.tags.domain.Tag;
+import com.starscape.rapidupload.features.tags.domain.TagRepository;
 import com.starscape.rapidupload.features.uploadphoto.domain.Photo;
 import com.starscape.rapidupload.features.uploadphoto.domain.PhotoStatus;
 import com.starscape.rapidupload.features.listphotos.infra.PhotoQueryRepository;
@@ -21,11 +25,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Handler for listing photos with pagination and filtering.
- * Supports filtering by status and searching by filename.
+ * Supports filtering by status, tag, and searching by filename.
  */
 @Service
 public class ListPhotosHandler {
@@ -33,14 +40,20 @@ public class ListPhotosHandler {
     private static final Logger log = LoggerFactory.getLogger(ListPhotosHandler.class);
     
     private final PhotoQueryRepository photoQueryRepository;
+    private final PhotoTagRepository photoTagRepository;
+    private final TagRepository tagRepository;
     private final S3Presigner s3Presigner;
     private final String bucket;
     
     public ListPhotosHandler(
             PhotoQueryRepository photoQueryRepository,
+            PhotoTagRepository photoTagRepository,
+            TagRepository tagRepository,
             S3Presigner s3Presigner,
             @Value("${aws.s3.bucket}") String bucket) {
         this.photoQueryRepository = photoQueryRepository;
+        this.photoTagRepository = photoTagRepository;
+        this.tagRepository = tagRepository;
         this.s3Presigner = s3Presigner;
         this.bucket = bucket;
     }
@@ -50,7 +63,7 @@ public class ListPhotosHandler {
             String userId, 
             String tag, 
             String status, 
-            String query, 
+            String search, 
             int page, 
             int size) {
         
@@ -61,22 +74,50 @@ public class ListPhotosHandler {
         
         Page<Photo> photoPage;
         
-        if (status != null && !status.isBlank()) {
+        // Normalize tag label if provided
+        String tagLabel = (tag != null && !tag.isBlank()) ? tag.trim() : null;
+        boolean hasTagFilter = tagLabel != null;
+        boolean hasStatusFilter = status != null && !status.isBlank();
+        boolean hasSearchFilter = search != null && !search.isBlank();
+        
+        PhotoStatus photoStatus = null;
+        if (hasStatusFilter) {
             try {
-                PhotoStatus photoStatus = PhotoStatus.valueOf(status.toUpperCase());
-                photoPage = photoQueryRepository.findByUserIdAndStatus(userId, photoStatus, pageable);
+                photoStatus = PhotoStatus.valueOf(status.toUpperCase());
             } catch (IllegalArgumentException e) {
-                // Invalid status, fall back to all photos
-                photoPage = photoQueryRepository.findByUserId(userId, pageable);
+                // Invalid status, ignore filter
+                hasStatusFilter = false;
             }
-        } else if (query != null && !query.isBlank()) {
-            photoPage = photoQueryRepository.findByUserIdAndFilenameContaining(userId, query, pageable);
+        }
+        
+        // Determine which query method to use based on filters
+        if (hasStatusFilter && hasTagFilter && hasSearchFilter) {
+            photoPage = photoQueryRepository.findByUserIdAndStatusAndTagAndFilenameContaining(
+                userId, photoStatus, tagLabel, search, pageable);
+        } else if (hasStatusFilter && hasTagFilter) {
+            photoPage = photoQueryRepository.findByUserIdAndStatusAndTag(
+                userId, photoStatus, tagLabel, pageable);
+        } else if (hasTagFilter && hasSearchFilter) {
+            photoPage = photoQueryRepository.findByUserIdAndTagAndFilenameContaining(
+                userId, tagLabel, search, pageable);
+        } else if (hasTagFilter) {
+            photoPage = photoQueryRepository.findByUserIdAndTag(userId, tagLabel, pageable);
+        } else if (hasStatusFilter) {
+            photoPage = photoQueryRepository.findByUserIdAndStatus(userId, photoStatus, pageable);
+        } else if (hasSearchFilter) {
+            photoPage = photoQueryRepository.findByUserIdAndFilenameContaining(userId, search, pageable);
         } else {
             photoPage = photoQueryRepository.findByUserId(userId, pageable);
         }
         
+        // Load tags for all photos in one batch
+        List<String> photoIds = photoPage.getContent().stream()
+                .map(Photo::getPhotoId)
+                .toList();
+        Map<String, List<String>> tagsByPhotoId = loadTagsForPhotos(photoIds);
+        
         List<PhotoListItem> items = photoPage.getContent().stream()
-                .map(this::toListItem)
+                .map(photo -> toListItem(photo, tagsByPhotoId.getOrDefault(photo.getPhotoId(), List.of())))
                 .toList();
         
         return new PhotoListResponse(
@@ -89,10 +130,48 @@ public class ListPhotosHandler {
     }
     
     /**
+     * Load tags for multiple photos efficiently.
+     * Returns a map of photoId -> list of tag labels.
+     */
+    private Map<String, List<String>> loadTagsForPhotos(List<String> photoIds) {
+        if (photoIds.isEmpty()) {
+            return Map.of();
+        }
+        
+        // Load all photo-tag associations for these photos
+        List<PhotoTag> photoTags = new ArrayList<>();
+        for (String photoId : photoIds) {
+            photoTags.addAll(photoTagRepository.findByPhotoId(photoId));
+        }
+        
+        // Load all tags
+        List<String> tagIds = photoTags.stream()
+                .map(PhotoTag::getTagId)
+                .distinct()
+                .toList();
+        
+        Map<String, String> tagLabelsById = tagIds.stream()
+                .map(tagRepository::findById)
+                .filter(java.util.Optional::isPresent)
+                .map(java.util.Optional::get)
+                .collect(Collectors.toMap(Tag::getTagId, Tag::getLabel));
+        
+        // Group tags by photo ID
+        return photoTags.stream()
+                .collect(Collectors.groupingBy(
+                    PhotoTag::getPhotoId,
+                    Collectors.mapping(
+                        pt -> tagLabelsById.get(pt.getTagId()),
+                        Collectors.toList()
+                    )
+                ));
+    }
+    
+    /**
      * Convert Photo entity to PhotoListItem DTO.
      * Generates presigned thumbnail URLs for photos that have been uploaded.
      */
-    private PhotoListItem toListItem(Photo photo) {
+    private PhotoListItem toListItem(Photo photo, List<String> tags) {
         String thumbnailUrl = null;
         
         // Generate thumbnail URL if photo has been uploaded (PROCESSING or COMPLETED)
@@ -132,7 +211,8 @@ public class ListPhotosHandler {
             photo.getWidth(),
             photo.getHeight(),
             thumbnailUrl,
-            photo.getCreatedAt()
+            photo.getCreatedAt(),
+            tags
         );
     }
     

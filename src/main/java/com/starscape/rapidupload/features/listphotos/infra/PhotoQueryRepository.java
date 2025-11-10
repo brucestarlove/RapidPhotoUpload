@@ -11,7 +11,7 @@ import org.springframework.stereotype.Repository;
 
 /**
  * Read-optimized repository for photo queries.
- * Supports pagination, filtering, and search.
+ * Supports pagination, filtering by status/tag, and search by filename.
  */
 @Repository
 public interface PhotoQueryRepository extends JpaRepository<Photo, String> {
@@ -24,6 +24,57 @@ public interface PhotoQueryRepository extends JpaRepository<Photo, String> {
     Page<Photo> findByUserIdAndFilenameContaining(
         @Param("userId") String userId, 
         @Param("query") String query, 
+        Pageable pageable);
+    
+    /**
+     * Find photos by user ID and tag label.
+     * Uses IN subquery to find photos with the specified tag.
+     */
+    @Query("SELECT p FROM Photo p WHERE p.userId = :userId " +
+           "AND p.photoId IN (SELECT pt.photoId FROM PhotoTag pt, Tag t " +
+           "WHERE pt.tagId = t.tagId AND t.userId = :userId AND t.label = :tagLabel)")
+    Page<Photo> findByUserIdAndTag(
+        @Param("userId") String userId,
+        @Param("tagLabel") String tagLabel,
+        Pageable pageable);
+    
+    /**
+     * Find photos by user ID, status, and tag label.
+     */
+    @Query("SELECT p FROM Photo p WHERE p.userId = :userId AND p.status = :status " +
+           "AND p.photoId IN (SELECT pt.photoId FROM PhotoTag pt, Tag t " +
+           "WHERE pt.tagId = t.tagId AND t.userId = :userId AND t.label = :tagLabel)")
+    Page<Photo> findByUserIdAndStatusAndTag(
+        @Param("userId") String userId,
+        @Param("status") PhotoStatus status,
+        @Param("tagLabel") String tagLabel,
+        Pageable pageable);
+    
+    /**
+     * Find photos by user ID, tag label, and filename search.
+     */
+    @Query("SELECT p FROM Photo p WHERE p.userId = :userId " +
+           "AND LOWER(p.filename) LIKE LOWER(CONCAT('%', :query, '%')) " +
+           "AND p.photoId IN (SELECT pt.photoId FROM PhotoTag pt, Tag t " +
+           "WHERE pt.tagId = t.tagId AND t.userId = :userId AND t.label = :tagLabel)")
+    Page<Photo> findByUserIdAndTagAndFilenameContaining(
+        @Param("userId") String userId,
+        @Param("tagLabel") String tagLabel,
+        @Param("query") String query,
+        Pageable pageable);
+    
+    /**
+     * Find photos by user ID, status, tag label, and filename search.
+     */
+    @Query("SELECT p FROM Photo p WHERE p.userId = :userId AND p.status = :status " +
+           "AND LOWER(p.filename) LIKE LOWER(CONCAT('%', :query, '%')) " +
+           "AND p.photoId IN (SELECT pt.photoId FROM PhotoTag pt, Tag t " +
+           "WHERE pt.tagId = t.tagId AND t.userId = :userId AND t.label = :tagLabel)")
+    Page<Photo> findByUserIdAndStatusAndTagAndFilenameContaining(
+        @Param("userId") String userId,
+        @Param("status") PhotoStatus status,
+        @Param("tagLabel") String tagLabel,
+        @Param("query") String query,
         Pageable pageable);
 }
 

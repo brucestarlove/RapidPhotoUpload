@@ -5,7 +5,7 @@ import java.util.List;
 
 /**
  * Response DTO for photo metadata query.
- * Contains full photo information including EXIF data and thumbnail URLs.
+ * Contains full photo information including EXIF data, thumbnail URLs, and tags.
  */
 public record PhotoMetadataResponse(
     String photoId,
@@ -20,6 +20,7 @@ public record PhotoMetadataResponse(
     Object exif,
     List<String> thumbnailUrls,
     Instant createdAt,
-    Instant completedAt
+    Instant completedAt,
+    List<String> tags
 ) {}
 

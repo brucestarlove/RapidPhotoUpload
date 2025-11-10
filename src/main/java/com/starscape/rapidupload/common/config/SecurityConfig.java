@@ -50,19 +50,24 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        // Use setAllowedOriginPatterns to support wildcards and null origin (file://)
+        // When allowCredentials is true, we cannot use wildcard "*" - must use specific origins
+        // Use setAllowedOriginPatterns to support port wildcards (e.g., http://localhost:*)
         configuration.setAllowedOriginPatterns(Arrays.asList(
             "http://localhost:*",
             "http://127.0.0.1:*",
-            "*"  // Allow all origins for development (including null for file://)
+            "https://localhost:*",
+            "https://127.0.0.1:*"
         ));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
-        configuration.setAllowCredentials(false);  // Must be false when using wildcard origins
+        // Frontend sends credentials (withCredentials: true), so we must allow it
+        // Note: When allowCredentials is true, wildcard "*" origins are not allowed
+        configuration.setAllowCredentials(true);
         configuration.setExposedHeaders(Arrays.asList("Authorization", "Content-Type"));
         configuration.setMaxAge(3600L);  // Cache preflight for 1 hour
         
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        // Register CORS for all endpoints, including /ws/info (SockJS negotiation endpoint)
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }

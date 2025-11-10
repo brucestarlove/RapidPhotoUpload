@@ -7,6 +7,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * Service for broadcasting progress updates via WebSocket.
  * Sends real-time updates to subscribed clients.
@@ -48,6 +52,36 @@ public class ProgressBroadcaster {
         messagingTemplate.convertAndSend(destination, update);
         log.debug("Broadcasted job status to {}: status={}, completed={}/{}", 
             destination, update.status(), update.completedCount(), update.totalCount());
+    }
+    
+    /**
+     * Broadcast job completion message with exact format required by frontend.
+     * This message includes totalCount (so frontend recognizes it as JobStatusUpdate)
+     * and does NOT include photoId (which would make it be classified as ProgressUpdate).
+     * Also does NOT include cancelledCount per frontend requirements.
+     * 
+     * @param jobId The job ID
+     * @param status The job status (should be "COMPLETED")
+     * @param totalCount Total number of photos in the job
+     * @param completedCount Number of completed photos
+     * @param failedCount Number of failed photos
+     */
+    public void broadcastJobCompletion(String jobId, String status, int totalCount, 
+                                       int completedCount, int failedCount) {
+        String destination = "/topic/job/" + jobId;
+        
+        // Create message with exact format required by frontend
+        Map<String, Object> message = new HashMap<>();
+        message.put("jobId", jobId);
+        message.put("status", status);
+        message.put("totalCount", totalCount);
+        message.put("completedCount", completedCount);
+        message.put("failedCount", failedCount);
+        message.put("timestamp", Instant.now().toString());
+        
+        messagingTemplate.convertAndSend(destination, message);
+        log.info("Broadcasted job completion to {}: status={}, completed={}/{}, failed={}", 
+            destination, status, completedCount, totalCount, failedCount);
     }
 }
 

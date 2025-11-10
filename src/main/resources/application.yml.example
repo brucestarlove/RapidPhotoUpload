@@ -11,7 +11,10 @@ spring:
       minimum-idle: 5
       connection-timeout: 30000
       idle-timeout: 600000
-      max-lifetime: 1800000
+      # max-lifetime should be ~2-3 minutes less than database idle timeout
+      # Aurora PostgreSQL Serverless v2 default idle timeout is ~10-15 minutes
+      # Setting to 10 minutes (600000ms) to avoid connection validation warnings
+      max-lifetime: 600000
   
   jpa:
     hibernate:
@@ -72,10 +75,21 @@ app:
     thumbnail-sizes:
       - 256
       - 1024
-    max-image-dimension: 8192
     supported-formats:
       - image/jpeg
       - image/png
       - image/gif
       - image/webp
+  websocket:
+    # Allowed origins for WebSocket connections (CORS).
+    # Can be configured in multiple ways:
+    # 1. Comma-separated string: "http://localhost:3000,https://example.com"
+    # 2. Single value: "*" (allows all origins - default, use with caution in production)
+    # 3. Environment variable: Set WEBSOCKET_ALLOWED_ORIGINS="http://localhost:3000,https://example.com"
+    # 
+    # Examples:
+    #   allowed-origins: "*"  # Allow all origins (development only)
+    #   allowed-origins: "http://localhost:3000,http://localhost:3001"  # Specific origins
+    #   allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:*}  # From environment variable with "*" default
+    allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:*}
 

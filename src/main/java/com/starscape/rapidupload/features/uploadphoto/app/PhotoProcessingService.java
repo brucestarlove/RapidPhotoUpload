@@ -185,6 +185,7 @@ public class PhotoProcessingService {
     /**
      * Extract EXIF metadata from image bytes.
      * Returns a map of directory names to tag maps.
+     * Sanitizes string values to remove null bytes, which PostgreSQL JSONB doesn't support.
      */
     private Map<String, Object> extractExif(byte[] imageBytes) {
         Map<String, Object> exifData = new HashMap<>();
@@ -193,11 +194,13 @@ public class PhotoProcessingService {
             Metadata metadata = ImageMetadataReader.readMetadata(new ByteArrayInputStream(imageBytes));
             
             for (Directory directory : metadata.getDirectories()) {
-                String directoryName = directory.getName();
+                String directoryName = sanitizeString(directory.getName());
                 Map<String, String> tags = new HashMap<>();
                 
                 for (Tag tag : directory.getTags()) {
-                    tags.put(tag.getTagName(), tag.getDescription());
+                    String tagName = sanitizeString(tag.getTagName());
+                    String tagDescription = sanitizeString(tag.getDescription());
+                    tags.put(tagName, tagDescription);
                 }
                 
                 if (!tags.isEmpty()) {
@@ -206,11 +209,27 @@ public class PhotoProcessingService {
             }
             
         } catch (ImageProcessingException | IOException e) {
-            log.warn("Failed to extract EXIF data", e);
-            exifData.put("error", e.getMessage());
+            // Log at debug level - EXIF extraction failures are expected for invalid/corrupted images
+            log.debug("Failed to extract EXIF data: {}", e.getMessage());
+            exifData.put("error", sanitizeString(e.getMessage()));
         }
         
         return exifData;
+    }
+    
+    /**
+     * Sanitize a string by removing null bytes (\u0000).
+     * PostgreSQL JSONB doesn't support null bytes in text, so we remove them.
+     * 
+     * @param str The string to sanitize
+     * @return The sanitized string with null bytes removed, or null if input is null
+     */
+    private String sanitizeString(String str) {
+        if (str == null) {
+            return null;
+        }
+        // Remove null bytes - PostgreSQL JSONB doesn't support them
+        return str.replace("\u0000", "");
     }
     
     /**

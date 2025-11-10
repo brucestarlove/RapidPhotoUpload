@@ -4,6 +4,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.starscape.rapidupload.common.exception.NotFoundException;
 import com.starscape.rapidupload.features.getphotometadata.api.dto.PhotoMetadataResponse;
+import com.starscape.rapidupload.features.tags.domain.PhotoTag;
+import com.starscape.rapidupload.features.tags.domain.PhotoTagRepository;
+import com.starscape.rapidupload.features.tags.domain.Tag;
+import com.starscape.rapidupload.features.tags.domain.TagRepository;
 import com.starscape.rapidupload.features.uploadphoto.domain.Photo;
 import com.starscape.rapidupload.features.uploadphoto.domain.PhotoRepository;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,25 +21,32 @@ import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequ
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Handler for retrieving photo metadata.
- * Returns full photo information including EXIF data and thumbnail URLs.
+ * Returns full photo information including EXIF data, thumbnail URLs, and tags.
  */
 @Service
 public class GetPhotoMetadataHandler {
     
     private final PhotoRepository photoRepository;
+    private final PhotoTagRepository photoTagRepository;
+    private final TagRepository tagRepository;
     private final S3Presigner s3Presigner;
     private final ObjectMapper objectMapper;
     private final String bucket;
     
     public GetPhotoMetadataHandler(
             PhotoRepository photoRepository,
+            PhotoTagRepository photoTagRepository,
+            TagRepository tagRepository,
             S3Presigner s3Presigner,
             ObjectMapper objectMapper,
             @Value("${aws.s3.bucket}") String bucket) {
         this.photoRepository = photoRepository;
+        this.photoTagRepository = photoTagRepository;
+        this.tagRepository = tagRepository;
         this.s3Presigner = s3Presigner;
         this.objectMapper = objectMapper;
         this.bucket = bucket;
@@ -49,6 +60,11 @@ public class GetPhotoMetadataHandler {
         // Verify ownership
         if (!photo.getUserId().equals(userId)) {
             throw new IllegalArgumentException("Photo does not belong to user");
+        }
+        
+        // Check if photo is soft-deleted - return 404 for deleted photos
+        if (photo.isDeleted()) {
+            throw new NotFoundException("Photo not found: " + photoId);
         }
         
         // Parse EXIF JSON
@@ -72,6 +88,9 @@ public class GetPhotoMetadataHandler {
             }
         }
         
+        // Load tags for the photo
+        List<String> tags = loadTagsForPhoto(photoId);
+        
         return new PhotoMetadataResponse(
             photo.getPhotoId(),
             photo.getJobId(),
@@ -85,8 +104,23 @@ public class GetPhotoMetadataHandler {
             exif,
             thumbnailUrls,
             photo.getCreatedAt(),
-            photo.getCompletedAt()
+            photo.getCompletedAt(),
+            tags
         );
+    }
+    
+    /**
+     * Load tags for a single photo.
+     */
+    private List<String> loadTagsForPhoto(String photoId) {
+        List<PhotoTag> photoTags = photoTagRepository.findByPhotoId(photoId);
+        return photoTags.stream()
+                .map(pt -> tagRepository.findById(pt.getTagId()))
+                .filter(java.util.Optional::isPresent)
+                .map(java.util.Optional::get)
+                .map(Tag::getLabel)
+                .sorted()
+                .collect(Collectors.toList());
     }
     
     /**

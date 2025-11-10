@@ -25,13 +25,13 @@ public class PhotoListController {
     public ResponseEntity<PhotoListResponse> listPhotos(
             @RequestParam(required = false) String tag,
             @RequestParam(required = false) String status,
-            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String search,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "50") int size,
             @AuthenticationPrincipal UserPrincipal principal) {
         
         PhotoListResponse response = listPhotosHandler.handle(
-            principal.getUserId(), tag, status, q, page, size);
+            principal.getUserId(), tag, status, search, page, size);
         return ResponseEntity.ok(response);
     }
 }

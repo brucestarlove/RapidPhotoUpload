@@ -48,8 +48,12 @@ public class User extends AggregateRoot<String> {
         return userId;
     }
     
+    /**
+     * Returns the user ID. Delegates to getId() for consistency with Entity contract.
+     * @return the user ID
+     */
     public String getUserId() {
-        return userId;
+        return getId();
     }
     
     public String getEmail() {

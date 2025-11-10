@@ -72,6 +72,9 @@ public class Photo extends AggregateRoot<String> {
     @Column(name = "completed_at")
     private Instant completedAt;
     
+    @Column(name = "deleted_at")
+    private Instant deletedAt;
+    
     protected Photo() {
         // JPA constructor
     }
@@ -135,6 +138,11 @@ public class Photo extends AggregateRoot<String> {
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
     public Instant getCompletedAt() { return completedAt; }
+    public Instant getDeletedAt() { return deletedAt; }
+    
+    public boolean isDeleted() {
+        return deletedAt != null;
+    }
     
     public void setUploadJob(UploadJob uploadJob) {
         this.uploadJob = uploadJob;
@@ -181,6 +189,28 @@ public class Photo extends AggregateRoot<String> {
         if (status != PhotoStatus.COMPLETED && status != PhotoStatus.FAILED) {
             this.status = PhotoStatus.CANCELLED;
             this.completedAt = Instant.now();
+            this.updatedAt = Instant.now();
+        }
+    }
+    
+    /**
+     * Mark photo as soft-deleted.
+     * Sets deletedAt timestamp to current time.
+     */
+    public void markDeleted() {
+        if (this.deletedAt == null) {
+            this.deletedAt = Instant.now();
+            this.updatedAt = Instant.now();
+        }
+    }
+    
+    /**
+     * Restore photo from soft-deleted state.
+     * Clears deletedAt timestamp.
+     */
+    public void restore() {
+        if (this.deletedAt != null) {
+            this.deletedAt = null;
             this.updatedAt = Instant.now();
         }
     }

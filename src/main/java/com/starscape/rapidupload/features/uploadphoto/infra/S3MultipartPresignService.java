@@ -3,8 +3,12 @@ package com.starscape.rapidupload.features.uploadphoto.infra;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CompletedMultipartUpload;
+import software.amazon.awssdk.services.s3.model.CompletedPart;
 import software.amazon.awssdk.services.s3.model.CreateMultipartUploadRequest;
 import software.amazon.awssdk.services.s3.model.CreateMultipartUploadResponse;
+import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadResponse;
 import software.amazon.awssdk.services.s3.model.UploadPartRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedUploadPartRequest;
@@ -13,6 +17,7 @@ import software.amazon.awssdk.services.s3.presigner.model.UploadPartPresignReque
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class S3MultipartPresignService {
@@ -105,10 +110,53 @@ public class S3MultipartPresignService {
         int expiresInSeconds
     ) {}
     
+    /**
+     * Complete a multipart upload by assembling all parts.
+     * 
+     * @param s3Key The S3 key of the object
+     * @param uploadId The upload ID from the initial multipart upload
+     * @param parts List of completed parts with their ETags (partNumber, etag)
+     * @return The ETag of the completed object
+     * @throws software.amazon.awssdk.services.s3.model.S3Exception if the completion fails
+     */
+    public String completeMultipartUpload(String s3Key, String uploadId, List<PartWithEtag> parts) {
+        // Build completed parts list
+        List<CompletedPart> completedParts = parts.stream()
+                .map(part -> CompletedPart.builder()
+                        .partNumber(part.partNumber())
+                        .eTag(part.etag())
+                        .build())
+                .collect(Collectors.toList());
+        
+        // Build completed multipart upload
+        CompletedMultipartUpload completedMultipartUpload = CompletedMultipartUpload.builder()
+                .parts(completedParts)
+                .build();
+        
+        // Complete the multipart upload
+        CompleteMultipartUploadRequest completeRequest = CompleteMultipartUploadRequest.builder()
+                .bucket(bucket)
+                .key(s3Key)
+                .uploadId(uploadId)
+                .multipartUpload(completedMultipartUpload)
+                .build();
+        
+        CompleteMultipartUploadResponse response = s3Client.completeMultipartUpload(completeRequest);
+        return response.eTag();
+    }
+    
     public record PartUploadUrl(
         int partNumber,
         String url,
         long size
+    ) {}
+    
+    /**
+     * Represents a completed part with its part number and ETag.
+     */
+    public record PartWithEtag(
+        int partNumber,
+        String etag
     ) {}
 }
 

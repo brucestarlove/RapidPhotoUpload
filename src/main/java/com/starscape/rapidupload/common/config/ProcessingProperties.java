@@ -12,7 +12,6 @@ import java.util.List;
 public class ProcessingProperties {
     
     private List<Integer> thumbnailSizes;
-    private int maxImageDimension;
     private List<String> supportedFormats;
     
     public List<Integer> getThumbnailSizes() {
@@ -23,20 +22,28 @@ public class ProcessingProperties {
         this.thumbnailSizes = thumbnailSizes;
     }
     
-    public int getMaxImageDimension() {
-        return maxImageDimension;
-    }
-    
-    public void setMaxImageDimension(int maxImageDimension) {
-        this.maxImageDimension = maxImageDimension;
-    }
-    
     public List<String> getSupportedFormats() {
         return supportedFormats;
     }
     
     public void setSupportedFormats(List<String> supportedFormats) {
         this.supportedFormats = supportedFormats;
+    }
+    
+    /**
+     * Check if a MIME type is supported.
+     * Performs case-insensitive comparison.
+     * @param mimeType The MIME type to check
+     * @return true if the MIME type is in the supported formats list
+     */
+    public boolean isSupportedFormat(String mimeType) {
+        if (mimeType == null || supportedFormats == null || supportedFormats.isEmpty()) {
+            return false;
+        }
+        String normalizedMimeType = mimeType.toLowerCase().trim();
+        return supportedFormats.stream()
+                .map(format -> format.toLowerCase().trim())
+                .anyMatch(format -> format.equals(normalizedMimeType));
     }
 }
 

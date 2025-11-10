@@ -1,4 +1,4 @@
-package com.starscape.rapidupload.features.listphotos.app;
+package com.starscape.rapidupload.features.deletephoto.app;
 
 import com.starscape.rapidupload.features.listphotos.api.dto.PhotoListItem;
 import com.starscape.rapidupload.features.listphotos.api.dto.PhotoListResponse;
@@ -31,13 +31,13 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * Handler for listing photos with pagination and filtering.
- * Supports filtering by status, tag, and searching by filename.
+ * Handler for listing soft-deleted photos (trash view).
+ * Returns paginated list of deleted photos with tags and thumbnail URLs.
  */
 @Service
-public class ListPhotosHandler {
+public class ListTrashHandler {
     
-    private static final Logger log = LoggerFactory.getLogger(ListPhotosHandler.class);
+    private static final Logger log = LoggerFactory.getLogger(ListTrashHandler.class);
     
     private final PhotoQueryRepository photoQueryRepository;
     private final PhotoTagRepository photoTagRepository;
@@ -45,7 +45,7 @@ public class ListPhotosHandler {
     private final S3Presigner s3Presigner;
     private final String bucket;
     
-    public ListPhotosHandler(
+    public ListTrashHandler(
             PhotoQueryRepository photoQueryRepository,
             PhotoTagRepository photoTagRepository,
             TagRepository tagRepository,
@@ -59,56 +59,13 @@ public class ListPhotosHandler {
     }
     
     @Transactional(readOnly = true)
-    public PhotoListResponse handle(
-            String userId, 
-            String tag, 
-            String status, 
-            String search, 
-            int page, 
-            int size) {
-        
+    public PhotoListResponse handle(String userId, int page, int size) {
         // Limit page size
         size = Math.min(size, 100);
         
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "deletedAt"));
         
-        Page<Photo> photoPage;
-        
-        // Normalize tag label if provided
-        String tagLabel = (tag != null && !tag.isBlank()) ? tag.trim() : null;
-        boolean hasTagFilter = tagLabel != null;
-        boolean hasStatusFilter = status != null && !status.isBlank();
-        boolean hasSearchFilter = search != null && !search.isBlank();
-        
-        PhotoStatus photoStatus = null;
-        if (hasStatusFilter) {
-            try {
-                photoStatus = PhotoStatus.valueOf(status.toUpperCase());
-            } catch (IllegalArgumentException e) {
-                // Invalid status, ignore filter
-                hasStatusFilter = false;
-            }
-        }
-        
-        // Determine which query method to use based on filters
-        if (hasStatusFilter && hasTagFilter && hasSearchFilter) {
-            photoPage = photoQueryRepository.findByUserIdAndStatusAndTagAndFilenameContaining(
-                userId, photoStatus, tagLabel, search, pageable);
-        } else if (hasStatusFilter && hasTagFilter) {
-            photoPage = photoQueryRepository.findByUserIdAndStatusAndTag(
-                userId, photoStatus, tagLabel, pageable);
-        } else if (hasTagFilter && hasSearchFilter) {
-            photoPage = photoQueryRepository.findByUserIdAndTagAndFilenameContaining(
-                userId, tagLabel, search, pageable);
-        } else if (hasTagFilter) {
-            photoPage = photoQueryRepository.findByUserIdAndTag(userId, tagLabel, pageable);
-        } else if (hasStatusFilter) {
-            photoPage = photoQueryRepository.findByUserIdAndStatus(userId, photoStatus, pageable);
-        } else if (hasSearchFilter) {
-            photoPage = photoQueryRepository.findByUserIdAndFilenameContaining(userId, search, pageable);
-        } else {
-            photoPage = photoQueryRepository.findByUserId(userId, pageable);
-        }
+        Page<Photo> photoPage = photoQueryRepository.findByUserIdAndDeletedAtIsNotNull(userId, pageable);
         
         // Load tags for all photos in one batch
         List<String> photoIds = photoPage.getContent().stream()
@@ -182,24 +139,19 @@ public class ListPhotosHandler {
                 String thumbnailKey = getThumbnailKey(photo.getS3Key(), 256);
                 log.debug("Generating presigned URL for thumbnail: bucket={}, key={}", bucket, thumbnailKey);
                 thumbnailUrl = generatePresignedGetUrl(thumbnailKey);
-                log.info("✅ Generated presigned thumbnail URL for photo {}: {}", photo.getPhotoId(), thumbnailUrl);
             } catch (Exception e) {
                 // If thumbnail doesn't exist or generation fails, try full image as fallback
-                log.warn("❌ Failed to generate thumbnail URL for photo {}: {}. Falling back to full image.", 
-                    photo.getPhotoId(), e.getMessage(), e);
+                log.warn("Failed to generate thumbnail URL for photo {}: {}. Falling back to full image.", 
+                    photo.getPhotoId(), e.getMessage());
                 try {
                     // Fallback to full image if thumbnail doesn't exist yet
                     thumbnailUrl = generatePresignedGetUrl(photo.getS3Key());
-                    log.info("✅ Generated fallback presigned URL for photo {}: {}", photo.getPhotoId(), thumbnailUrl);
                 } catch (Exception e2) {
-                    log.error("❌ Failed to generate fallback image URL for photo {}: {}", 
-                        photo.getPhotoId(), e2.getMessage(), e2);
+                    log.error("Failed to generate fallback image URL for photo {}: {}", 
+                        photo.getPhotoId(), e2.getMessage());
                     thumbnailUrl = null;
                 }
             }
-        } else {
-            log.debug("⏭️ Skipping thumbnail URL generation for photo {}: status={}, s3Key={}", 
-                photo.getPhotoId(), photo.getStatus(), photo.getS3Key());
         }
         
         return new PhotoListItem(
@@ -213,7 +165,7 @@ public class ListPhotosHandler {
             thumbnailUrl,
             photo.getCreatedAt(),
             tags,
-            null // deletedAt is null for non-deleted photos
+            photo.getDeletedAt()
         );
     }
     
@@ -236,32 +188,18 @@ public class ListPhotosHandler {
      * Generate presigned GET URL for S3 object.
      */
     private String generatePresignedGetUrl(String s3Key) {
-        if (s3Presigner == null) {
-            log.error("❌ S3Presigner is null! Cannot generate presigned URL.");
-            throw new IllegalStateException("S3Presigner is not configured");
-        }
-        
-        if (bucket == null || bucket.isBlank()) {
-            log.error("❌ S3 bucket is not configured!");
-            throw new IllegalStateException("S3 bucket is not configured");
-        }
-        
-        log.debug("Generating presigned URL: bucket={}, key={}", bucket, s3Key);
-        
         GetObjectRequest getRequest = GetObjectRequest.builder()
                 .bucket(bucket)
                 .key(s3Key)
                 .build();
         
         GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
-                .signatureDuration(Duration.ofMinutes(15))  // Longer duration for list view
+                .signatureDuration(Duration.ofMinutes(15))
                 .getObjectRequest(getRequest)
                 .build();
         
         PresignedGetObjectRequest presigned = s3Presigner.presignGetObject(presignRequest);
-        String url = presigned.url().toString();
-        log.debug("Generated presigned URL: {}", url);
-        return url;
+        return presigned.url().toString();
     }
 }
 

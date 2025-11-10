@@ -62,6 +62,11 @@ public class GetPhotoMetadataHandler {
             throw new IllegalArgumentException("Photo does not belong to user");
         }
         
+        // Check if photo is soft-deleted - return 404 for deleted photos
+        if (photo.isDeleted()) {
+            throw new NotFoundException("Photo not found: " + photoId);
+        }
+        
         // Parse EXIF JSON
         Object exif = null;
         if (photo.getExifJson() != null) {

@@ -15,7 +15,6 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.Arrays;
-import java.util.List;
 
 @Configuration
 @EnableWebSecurity
@@ -37,7 +36,6 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers("/actuator/health", "/actuator/info").permitAll()
-                .requestMatchers("/ws/**").permitAll()  // WebSocket endpoint (authentication handled via STOMP headers)
                 .requestMatchers("/commands/**").hasAuthority("photos:write")
                 .requestMatchers("/queries/**").hasAuthority("photos:read")
                 .anyRequest().authenticated()
@@ -67,7 +65,6 @@ public class SecurityConfig {
         configuration.setMaxAge(3600L);  // Cache preflight for 1 hour
         
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        // Register CORS for all endpoints, including /ws/info (SockJS negotiation endpoint)
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }

@@ -66,6 +66,4 @@ app:
       - image/png
       - image/gif
       - image/webp
-  websocket:
-    allowed-origins: ${WEBSOCKET_ALLOWED_ORIGINS:*}
 

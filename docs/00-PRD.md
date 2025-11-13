@@ -30,7 +30,7 @@
 
   * **Command API** (writes): create upload jobs, generate presigned URLs, finalize uploads.
   * **Query API** (reads): poll/get status, list photos, filter/tag metadata.
-  * **WebSocket/SSE** channel for live progress + status.
+  * **Query API for polling** progress status.
 * **AWS S3**: object store using **Multipart Upload** + **S3 Events** (ObjectCreated).
 * **SQS**: internal work queue for post-upload processing (thumbnails, EXIF, virus scan placeholder).
 * **PostgreSQL**: source of truth for **Photo**, **UploadJob**, **UploadPart**, **Tag**, **User**.
@@ -43,7 +43,7 @@
 2. API returns **presigned URLs** (one per file) + **multipart upload IDs** (optional path).
 3. **Client uploads directly to S3** (bypasses app CPU/RAM), emits progress (per part) to UI; also **POSTs progress ticks** to `/commands/upload/progress` (best-effort) to enrich server-side telemetry.
 4. **S3 ObjectCreated event** → **EventBridge → SQS** → **Processor** marks each Photo *Processing*, extracts EXIF, generates thumbnails, calculates checksums, stores **object key/ETag/size**.
-5. Processor marks Photo *Completed* or *Failed*; **WebSocket/SSE** pushes updates; Query API reflects final status.
+5. Processor marks Photo *Completed* or *Failed*; **Client polls Query API** for updates; Query API reflects final status.
 6. Batch completes when all Photos are terminal (*Completed/Failed/Cancelled*).
 
 > Rationale: direct-to-S3 + presigned URLs minimizes server load while enabling precise progress UX; SQS decouples post-upload work for reliability under burst concurrency.
@@ -115,9 +115,12 @@ com.starscape.rapidupload
 * `GET /queries/photos?tag=&q=&page=&size=` → list/filter
 * `GET /queries/photos/{photoId}/download-url` → **time-boxed presigned GET**
 
-### Realtime
+### Progress Tracking
 
-* **`/ws`** WebSocket (or **`/events`** SSE) → server pushes `{photoId, status, progress%}` to **job topic**.
+* **Polling** - Client polls `GET /queries/upload-jobs/{jobId}` every 1-2 seconds
+* Server returns job status with all photo statuses
+* Recommended polling interval: 1500ms during active uploads
+* Stop polling when job status is COMPLETED or FAILED
 
 ---
 

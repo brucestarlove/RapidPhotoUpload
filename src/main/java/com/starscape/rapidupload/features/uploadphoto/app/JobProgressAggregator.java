@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.starscape.rapidupload.common.exception.NotFoundException;
 import com.starscape.rapidupload.common.outbox.OutboxEvent;
 import com.starscape.rapidupload.common.outbox.OutboxEventRepository;
-import com.starscape.rapidupload.features.trackprogress.app.ProgressBroadcaster;
 import com.starscape.rapidupload.features.uploadphoto.domain.UploadJob;
 import com.starscape.rapidupload.features.uploadphoto.domain.UploadJobRepository;
 import com.starscape.rapidupload.features.uploadphoto.domain.UploadJobStatus;
@@ -27,11 +26,8 @@ import java.util.List;
  * - Reads unprocessed outbox events (PhotoProcessingCompleted, PhotoFailed)
  * - Updates UploadJob aggregate state (progress counts, status)
  * - Marks events as processed after successful handling
- * - Broadcasts WebSocket message when job completes
  * 
- * Note: This service focuses on domain state updates and job completion notifications.
- * For real-time photo-level progress broadcasts, see PhotoEventListener and JobEventListener
- * in the trackprogress feature.
+ * Note: Clients poll the Query API (GET /queries/upload-jobs/{jobId}) to get job status updates.
  */
 @Service
 public class JobProgressAggregator {
@@ -41,17 +37,14 @@ public class JobProgressAggregator {
     private final OutboxEventRepository outboxRepository;
     private final UploadJobRepository jobRepository;
     private final ObjectMapper objectMapper;
-    private final ProgressBroadcaster progressBroadcaster;
     
     public JobProgressAggregator(
             OutboxEventRepository outboxRepository,
             UploadJobRepository jobRepository,
-            ObjectMapper objectMapper,
-            ProgressBroadcaster progressBroadcaster) {
+            ObjectMapper objectMapper) {
         this.outboxRepository = outboxRepository;
         this.jobRepository = jobRepository;
         this.objectMapper = objectMapper;
-        this.progressBroadcaster = progressBroadcaster;
     }
     
     /**
@@ -101,14 +94,10 @@ public class JobProgressAggregator {
     
     /**
      * Update UploadJob progress by recalculating counts from photos.
-     * Detects job completion and broadcasts WebSocket message immediately.
      */
     private void updateJobProgress(String jobId) {
         UploadJob job = jobRepository.findByIdWithPhotos(jobId)
                 .orElseThrow(() -> new NotFoundException("Job not found: " + jobId));
-        
-        // Track previous status to detect completion transition
-        UploadJobStatus previousStatus = job.getStatus();
         
         job.updateProgress();
         jobRepository.save(job);
@@ -117,19 +106,6 @@ public class JobProgressAggregator {
         
         log.info("Updated job progress: jobId={}, status={}, completed={}/{}, failed={}", 
             jobId, newStatus, job.getCompletedCount(), job.getTotalCount(), job.getFailedCount());
-        
-        // Broadcast WebSocket message when job transitions to COMPLETED or COMPLETED_WITH_ERRORS
-        if ((newStatus == UploadJobStatus.COMPLETED || newStatus == UploadJobStatus.COMPLETED_WITH_ERRORS) 
-            && previousStatus != newStatus) {
-            // Send completion message with exact format required by frontend
-            progressBroadcaster.broadcastJobCompletion(
-                job.getJobId(),
-                "COMPLETED",  // Frontend expects "COMPLETED" for both completion statuses
-                job.getTotalCount(),
-                job.getCompletedCount(),
-                job.getFailedCount()
-            );
-        }
     }
 }
 

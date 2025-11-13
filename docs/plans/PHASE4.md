@@ -1,6 +1,6 @@
-# Phase 4: Real-time Progress &amp; Query APIs
+# Phase 4: Query APIs &amp; Progress Polling
 
-**Status**: WebSocket + CQRS Read Side  
+**Status**: Polling-Based Progress Tracking + CQRS Read Side  
 **Duration Estimate**: 2-3 weeks  
 **Dependencies**: Phase 3 (Async Processing Pipeline)
 
@@ -8,405 +8,91 @@
 
 ## Overview
 
-Implement the read side of the CQRS architecture: real-time WebSocket/SSE push notifications for upload progress and query APIs for retrieving photo metadata, job status, and generating download URLs. This phase completes the user experience loop, providing live feedback as uploads are processed.
+Implement the read side of the CQRS architecture: query APIs for retrieving photo metadata, job status, and generating download URLs. Clients poll the Query API to get progress updates, providing a simple and reliable way to track upload progress without the complexity of WebSocket connections. This phase completes the user experience loop, providing live feedback as uploads are processed.
 
 ---
 
 ## Goals
 
-1. Implement WebSocket/STOMP endpoint for real-time progress updates
-2. Build query APIs for jobs, photos, and filtered lists
-3. Generate presigned GET URLs for secure downloads
-4. Create read-optimized projections and DTOs
-5. Implement event listeners that broadcast to WebSocket clients
-6. Add pagination, filtering, and search capabilities
+1. Build query APIs for jobs, photos, and filtered lists
+2. Generate presigned GET URLs for secure downloads
+3. Create read-optimized projections and DTOs
+4. Document polling-based progress tracking approach
+5. Add pagination, filtering, and search capabilities
+6. Provide client-side polling implementation guidance
 
 ---
 
 ## Technical Stack
 
-### New Dependencies
+### No New Dependencies Required
 
-```xml
-<!-- WebSocket support -->
-<dependency>
-  <groupId>org.springframework.boot</groupId>
-  <artifactId>spring-boot-starter-websocket</artifactId>
-</dependency>
-
-<!-- STOMP messaging -->
-<dependency>
-  <groupId>org.springframework</groupId>
-  <artifactId>spring-messaging</artifactId>
-</dependency>
-
-<!-- SockJS (WebSocket fallback) -->
-<dependency>
-  <groupId>org.webjars</groupId>
-  <artifactId>sockjs-client</artifactId>
-  <version>1.5.1</version>
-</dependency>
-
-<dependency>
-  <groupId>org.webjars</groupId>
-  <artifactId>stomp-websocket</artifactId>
-  <version>2.3.4</version>
-</dependency>
-```
+This phase uses existing Spring Boot dependencies. No WebSocket or messaging dependencies are needed.
 
 ---
 
 ## Deliverables
 
-### 1. WebSocket Configuration
+### 1. Progress Tracking via Polling
 
-**`common/config/WebSocketConfig.java`**
-```java
-package com.starscape.rapidupload.common.config;
+Clients poll the `GET /queries/upload-jobs/{jobId}` endpoint to get job status updates. The endpoint returns complete job information including all photo statuses, making it ideal for progress tracking.
 
-import org.springframework.context.annotation.Configuration;
-import org.springframework.messaging.simp.config.MessageBrokerRegistry;
-import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
-import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
-import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
+**Recommended Polling Implementation:**
 
-@Configuration
-@EnableWebSocketMessageBroker
-public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
-    
-    @Override
-    public void configureMessageBroker(MessageBrokerRegistry registry) {
-        // Enable simple broker for topic and queue destinations
-        registry.enableSimpleBroker("/topic", "/queue");
-        
-        // Prefix for client messages
-        registry.setApplicationDestinationPrefixes("/app");
-        
-        // Prefix for user-specific messages
-        registry.setUserDestinationPrefix("/user");
+```javascript
+// Recommended polling implementation
+async function pollJobStatus(jobId, authToken) {
+  const pollInterval = 1500; // 1.5 seconds
+  
+  const interval = setInterval(async () => {
+    try {
+      const response = await fetch(`/queries/upload-jobs/${jobId}`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      
+      const jobStatus = await response.json();
+      updateUI(jobStatus);
+      
+      // Stop polling when job is complete
+      if (jobStatus.status === 'COMPLETED' || 
+          jobStatus.status === 'FAILED' || 
+          jobStatus.status === 'CANCELLED') {
+        clearInterval(interval);
+      }
+    } catch (error) {
+      console.error('Polling error:', error);
+      // Consider exponential backoff on errors
+      // For now, continue polling
     }
-    
-    @Override
-    public void registerStompEndpoints(StompEndpointRegistry registry) {
-        // WebSocket endpoint with SockJS fallback
-        registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("*")  // Configure properly in production
-                .withSockJS();
-    }
+  }, pollInterval);
+  
+  return interval; // Return so caller can cancel if needed
 }
+
+// Usage example
+const jobId = 'job_abc123';
+const token = 'your-jwt-token';
+const pollInterval = pollJobStatus(jobId, token);
+
+// To cancel polling manually:
+// clearInterval(pollInterval);
 ```
+
+**Polling Best Practices:**
+
+- **Interval**: 1500ms (1.5 seconds) is recommended for active uploads
+- **Stop Condition**: Stop polling when job status is `COMPLETED`, `FAILED`, or `CANCELLED`
+- **Error Handling**: Implement exponential backoff on consecutive errors
+- **Performance**: The endpoint is optimized for frequent polling with read-only transactions
+- **Rate Limiting**: Consider implementing client-side rate limiting to avoid excessive requests
 
 ---
 
-### 2. Progress Tracking Feature (WebSocket)
-
-#### Progress Event DTOs
-
-**`features/trackprogress/api/dto/ProgressUpdate.java`**
-```java
-package com.starscape.rapidupload.features.trackprogress.api.dto;
-
-import java.time.Instant;
-
-public record ProgressUpdate(
-    String jobId,
-    String photoId,
-    String status,
-    int progressPercent,
-    String message,
-    Instant timestamp
-) {
-    public static ProgressUpdate of(String jobId, String photoId, String status, int percent, String message) {
-        return new ProgressUpdate(jobId, photoId, status, percent, message, Instant.now());
-    }
-}
-```
-
-**`features/trackprogress/api/dto/JobStatusUpdate.java`**
-```java
-package com.starscape.rapidupload.features.trackprogress.api.dto;
-
-import java.time.Instant;
-
-public record JobStatusUpdate(
-    String jobId,
-    String status,
-    int totalCount,
-    int completedCount,
-    int failedCount,
-    int cancelledCount,
-    Instant timestamp
-) {
-    public static JobStatusUpdate of(
-            String jobId, 
-            String status, 
-            int total, 
-            int completed, 
-            int failed, 
-            int cancelled) {
-        return new JobStatusUpdate(jobId, status, total, completed, failed, cancelled, Instant.now());
-    }
-}
-```
-
-#### WebSocket Event Broadcaster
-
-**`features/trackprogress/app/ProgressBroadcaster.java`**
-```java
-package com.starscape.rapidupload.features.trackprogress.app;
-
-import com.starscape.rapidupload.features.trackprogress.api.dto.JobStatusUpdate;
-import com.starscape.rapidupload.features.trackprogress.api.dto.ProgressUpdate;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
-import org.springframework.stereotype.Service;
-
-@Service
-public class ProgressBroadcaster {
-    
-    private static final Logger log = LoggerFactory.getLogger(ProgressBroadcaster.class);
-    
-    private final SimpMessagingTemplate messagingTemplate;
-    
-    public ProgressBroadcaster(SimpMessagingTemplate messagingTemplate) {
-        this.messagingTemplate = messagingTemplate;
-    }
-    
-    /**
-     * Broadcast progress update to all subscribers of a job topic
-     */
-    public void broadcastProgress(ProgressUpdate update) {
-        String destination = "/topic/job/" + update.jobId();
-        messagingTemplate.convertAndSend(destination, update);
-        log.debug("Broadcasted progress to {}: photoId={}, status={}", 
-            destination, update.photoId(), update.status());
-    }
-    
-    /**
-     * Send progress update to a specific user
-     */
-    public void sendToUser(String userId, ProgressUpdate update) {
-        messagingTemplate.convertAndSendToUser(userId, "/queue/progress", update);
-        log.debug("Sent progress to user {}: photoId={}", userId, update.photoId());
-    }
-    
-    /**
-     * Broadcast job status update
-     */
-    public void broadcastJobStatus(JobStatusUpdate update) {
-        String destination = "/topic/job/" + update.jobId();
-        messagingTemplate.convertAndSend(destination, update);
-        log.debug("Broadcasted job status to {}: status={}, completed={}/{}", 
-            destination, update.status(), update.completedCount(), update.totalCount());
-    }
-}
-```
-
-#### Domain Event Listeners
-
-**`features/trackprogress/app/PhotoEventListener.java`**
-```java
-package com.starscape.rapidupload.features.trackprogress.app;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.starscape.rapidupload.common.outbox.OutboxEvent;
-import com.starscape.rapidupload.common.outbox.OutboxEventRepository;
-import com.starscape.rapidupload.features.trackprogress.api.dto.ProgressUpdate;
-import com.starscape.rapidupload.features.uploadphoto.domain.events.PhotoProcessingCompleted;
-import com.starscape.rapidupload.features.uploadphoto.domain.events.PhotoFailed;
-import com.starscape.rapidupload.features.uploadphoto.domain.events.PhotoQueued;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
-
-@Service
-public class PhotoEventListener {
-    
-    private static final Logger log = LoggerFactory.getLogger(PhotoEventListener.class);
-    
-    private final OutboxEventRepository outboxRepository;
-    private final ProgressBroadcaster progressBroadcaster;
-    private final ObjectMapper objectMapper;
-    
-    public PhotoEventListener(
-            OutboxEventRepository outboxRepository,
-            ProgressBroadcaster progressBroadcaster,
-            ObjectMapper objectMapper) {
-        this.outboxRepository = outboxRepository;
-        this.progressBroadcaster = progressBroadcaster;
-        this.objectMapper = objectMapper;
-    }
-    
-    @Scheduled(fixedDelay = 2000)  // Every 2 seconds
-    @Transactional
-    public void processPhotoEvents() {
-        List<OutboxEvent> events = outboxRepository.findUnprocessedEventsWithLimit(50);
-        
-        if (events.isEmpty()) {
-            return;
-        }
-        
-        for (OutboxEvent event : events) {
-            try {
-                handleEvent(event);
-                // Events already marked processed by JobProgressAggregator
-            } catch (Exception e) {
-                log.error("Failed to broadcast event: {}", event.getEventId(), e);
-            }
-        }
-    }
-    
-    private void handleEvent(OutboxEvent event) throws JsonProcessingException {
-        switch (event.getEventType()) {
-            case "PhotoQueued" -> {
-                PhotoQueued photoEvent = objectMapper.readValue(event.getPayload(), PhotoQueued.class);
-                ProgressUpdate update = ProgressUpdate.of(
-                    extractJobId(photoEvent.photoId()),
-                    photoEvent.photoId(),
-                    "QUEUED",
-                    0,
-                    "Photo queued for upload"
-                );
-                progressBroadcaster.broadcastProgress(update);
-            }
-            case "PhotoProcessingCompleted" -> {
-                PhotoProcessingCompleted photoEvent = objectMapper.readValue(
-                    event.getPayload(), PhotoProcessingCompleted.class);
-                ProgressUpdate update = ProgressUpdate.of(
-                    photoEvent.jobId(),
-                    photoEvent.photoId(),
-                    "COMPLETED",
-                    100,
-                    "Processing complete"
-                );
-                progressBroadcaster.broadcastProgress(update);
-            }
-            case "PhotoFailed" -> {
-                PhotoFailed photoEvent = objectMapper.readValue(event.getPayload(), PhotoFailed.class);
-                ProgressUpdate update = ProgressUpdate.of(
-                    photoEvent.jobId(),
-                    photoEvent.photoId(),
-                    "FAILED",
-                    0,
-                    photoEvent.errorMessage()
-                );
-                progressBroadcaster.broadcastProgress(update);
-            }
-        }
-    }
-    
-    private String extractJobId(String photoId) {
-        // Fallback if jobId not in event (shouldn't happen in practice)
-        return "unknown";
-    }
-}
-```
-
-**`features/trackprogress/app/JobEventListener.java`**
-```java
-package com.starscape.rapidupload.features.trackprogress.app;
-
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.starscape.rapidupload.common.outbox.OutboxEvent;
-import com.starscape.rapidupload.common.outbox.OutboxEventRepository;
-import com.starscape.rapidupload.features.trackprogress.api.dto.JobStatusUpdate;
-import com.starscape.rapidupload.features.uploadphoto.domain.UploadJob;
-import com.starscape.rapidupload.features.uploadphoto.domain.UploadJobRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-
-@Service
-public class JobEventListener {
-    
-    private static final Logger log = LoggerFactory.getLogger(JobEventListener.class);
-    
-    private final OutboxEventRepository outboxRepository;
-    private final UploadJobRepository jobRepository;
-    private final ProgressBroadcaster progressBroadcaster;
-    private final ObjectMapper objectMapper;
-    
-    // Track jobs we've recently updated to avoid excessive broadcasts
-    private final Set<String> recentlyUpdated = new HashSet<>();
-    
-    public JobEventListener(
-            OutboxEventRepository outboxRepository,
-            UploadJobRepository jobRepository,
-            ProgressBroadcaster progressBroadcaster,
-            ObjectMapper objectMapper) {
-        this.outboxRepository = outboxRepository;
-        this.jobRepository = jobRepository;
-        this.progressBroadcaster = progressBroadcaster;
-        this.objectMapper = objectMapper;
-    }
-    
-    @Scheduled(fixedDelay = 3000)  // Every 3 seconds
-    @Transactional(readOnly = true)
-    public void broadcastJobUpdates() {
-        // Find jobs that have recent photo events
-        List<OutboxEvent> photoEvents = outboxRepository.findUnprocessedEventsWithLimit(100);
-        
-        Set<String> jobIds = new HashSet<>();
-        for (OutboxEvent event : photoEvents) {
-            if (event.getAggregateType().equals("Photo")) {
-                try {
-                    String payload = event.getPayload();
-                    // Extract jobId from payload (all photo events have it)
-                    if (payload.contains("\"jobId\"")) {
-                        var node = objectMapper.readTree(payload);
-                        String jobId = node.get("jobId").asText();
-                        jobIds.add(jobId);
-                    }
-                } catch (JsonProcessingException e) {
-                    log.warn("Failed to parse event payload", e);
-                }
-            }
-        }
-        
-        // Broadcast updates for affected jobs
-        for (String jobId : jobIds) {
-            if (!recentlyUpdated.contains(jobId)) {
-                jobRepository.findById(jobId).ifPresent(this::broadcastJobStatus);
-                recentlyUpdated.add(jobId);
-            }
-        }
-        
-        // Clear cache periodically
-        if (recentlyUpdated.size() > 1000) {
-            recentlyUpdated.clear();
-        }
-    }
-    
-    private void broadcastJobStatus(UploadJob job) {
-        JobStatusUpdate update = JobStatusUpdate.of(
-            job.getJobId(),
-            job.getStatus().name(),
-            job.getTotalCount(),
-            job.getCompletedCount(),
-            job.getFailedCount(),
-            job.getCancelledCount()
-        );
-        progressBroadcaster.broadcastJobStatus(update);
-    }
-}
-```
-
----
-
-### 3. Query APIs (Read Side)
+### 2. Query APIs (Read Side)
 
 #### Query DTOs
 
@@ -1007,53 +693,82 @@ public interface PhotoQueryRepository extends JpaRepository<Photo, String> {
 
 ---
 
-### 6. Client-Side WebSocket Example (HTML/JavaScript)
+### 6. Client-Side Polling Example (HTML/JavaScript)
 
-**`static/websocket-example.html`**
+**`static/polling-example.html`**
 ```html
 <!DOCTYPE html>
 <html>
 <head>
-    <title>RapidPhotoUpload - Live Progress</title>
-    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1.5.1/dist/sockjs.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+    <title>RapidPhotoUpload - Progress Tracking</title>
 </head>
 <body>
     <h1>Upload Progress</h1>
-    <div id="status">Connecting...</div>
+    <div id="status">Polling...</div>
     <div id="progress"></div>
     
     <script>
         const jobId = 'job_abc123'; // Replace with actual job ID
+        const authToken = 'your-jwt-token'; // Replace with actual token
         
-        // Connect to WebSocket
-        const socket = new SockJS('/ws');
-        const stompClient = Stomp.over(socket);
+        let pollInterval = null;
         
-        stompClient.connect({}, function(frame) {
-            console.log('Connected: ' + frame);
-            document.getElementById('status').textContent = 'Connected';
-            
-            // Subscribe to job-specific topic
-            stompClient.subscribe('/topic/job/' + jobId, function(message) {
-                const update = JSON.parse(message.body);
-                console.log('Progress update:', update);
-                displayProgress(update);
-            });
-        });
-        
-        function displayProgress(update) {
-            const progressDiv = document.getElementById('progress');
-            const entry = document.createElement('div');
-            
-            if (update.photoId) {
-                entry.textContent = `Photo ${update.photoId}: ${update.status} (${update.progressPercent}%)`;
-            } else {
-                entry.textContent = `Job ${update.jobId}: ${update.status} - ${update.completedCount}/${update.totalCount} completed`;
-            }
-            
-            progressDiv.appendChild(entry);
+        function startPolling() {
+            pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/queries/upload-jobs/${jobId}`, {
+                        headers: { 'Authorization': `Bearer ${authToken}` }
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    
+                    const jobStatus = await response.json();
+                    displayProgress(jobStatus);
+                    
+                    // Stop polling when job is complete
+                    if (jobStatus.status === 'COMPLETED' || 
+                        jobStatus.status === 'FAILED' || 
+                        jobStatus.status === 'CANCELLED') {
+                        stopPolling();
+                        document.getElementById('status').textContent = 'Complete';
+                    }
+                } catch (error) {
+                    console.error('Polling error:', error);
+                    document.getElementById('status').textContent = 'Error: ' + error.message;
+                }
+            }, 1500); // Poll every 1.5 seconds
         }
+        
+        function stopPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        }
+        
+        function displayProgress(jobStatus) {
+            const progressDiv = document.getElementById('progress');
+            progressDiv.innerHTML = `
+                <h2>Job: ${jobStatus.jobId}</h2>
+                <p>Status: ${jobStatus.status}</p>
+                <p>Progress: ${jobStatus.completedCount}/${jobStatus.totalCount} completed</p>
+                <p>Failed: ${jobStatus.failedCount}</p>
+                <h3>Photos:</h3>
+                <ul>
+                    ${jobStatus.photos.map(p => 
+                        `<li>${p.filename}: ${p.status}${p.errorMessage ? ' - ' + p.errorMessage : ''}</li>`
+                    ).join('')}
+                </ul>
+            `;
+        }
+        
+        // Start polling when page loads
+        startPolling();
+        
+        // Clean up on page unload
+        window.addEventListener('beforeunload', stopPolling);
     </script>
 </body>
 </html>
@@ -1063,12 +778,12 @@ public interface PhotoQueryRepository extends JpaRepository<Photo, String> {
 
 ## Acceptance Criteria
 
-### ✓ WebSocket Real-time Updates
-- [ ] Client connects to `/ws` endpoint via SockJS
-- [ ] Client subscribes to `/topic/job/{jobId}` successfully
-- [ ] Server broadcasts progress updates when photos transition states
-- [ ] Updates received within 1 second of server-side state change
-- [ ] WebSocket connection remains stable for long-duration uploads
+### ✓ Progress Polling
+- [ ] Client polls `GET /queries/upload-jobs/{jobId}` successfully
+- [ ] Polling interval is appropriate (1-2 seconds recommended)
+- [ ] Client stops polling when job reaches terminal state
+- [ ] Error handling implemented with appropriate retry logic
+- [ ] UI updates smoothly with polling results
 
 ### ✓ Query APIs
 - [ ] GET `/queries/photos/{photoId}` returns full metadata including EXIF
@@ -1098,19 +813,19 @@ public interface PhotoQueryRepository extends JpaRepository<Photo, String> {
 ## Next Steps
 
 Upon completion of Phase 4:
-1. **Test** end-to-end: upload → progress updates via WebSocket → query API
-2. **Verify** real-time updates work for concurrent uploads
-3. **Benchmark** query performance under load
-4. **Proceed** to Phase 5: Observability &amp; Production Readiness
+1. **Test** end-to-end: upload → progress polling → query API
+2. **Verify** polling works reliably for concurrent uploads
+3. **Benchmark** query performance under load (should handle frequent polling)
+4. **Optimize** database queries for polling use case if needed
+5. **Proceed** to Phase 5: Observability &amp; Production Readiness
 
 ---
 
 ## References
 
-- **Spring WebSocket Documentation**: https://spring.io/guides/gs/messaging-stomp-websocket/
-- **SockJS Protocol**: https://github.com/sockjs/sockjs-protocol
-- **STOMP Protocol**: https://stomp.github.io/
 - **AWS S3 Presigned URLs**: https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html
+- **Spring Data JPA Pagination**: https://docs.spring.io/spring-data/jpa/docs/current/reference/html/#repositories.query-methods.query-creation
+- **HTTP Polling Best Practices**: https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API
 
 ---
 

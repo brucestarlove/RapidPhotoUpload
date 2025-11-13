@@ -88,18 +88,25 @@ public class PhotoProcessingService {
         // Extract photoId from S3 key: dev/userId/jobId/photoId.ext
         String photoId = extractPhotoIdFromS3Key(s3Key);
         if (photoId == null) {
-            log.warn("Could not extract photoId from S3 key: {}", s3Key);
+            log.error("Could not extract photoId from S3 key: {}. This SQS message will be discarded.", s3Key);
+            // Don't throw exception - this is a permanent failure (malformed S3 key)
             return;
         }
         
         // Find photo by ID (s3_key is NULL until processing starts)
         Optional<Photo> photoOpt = photoRepository.findById(photoId);
         if (photoOpt.isEmpty()) {
-            log.warn("Photo not found for photoId: {} (S3 key: {})", photoId, s3Key);
+            log.error("Photo not found for photoId: {} (S3 key: {}). Photo may not have been created or S3 key format is incorrect. This SQS message will be discarded.", photoId, s3Key);
+            // Don't throw exception - this is a permanent failure (photo doesn't exist)
+            // The photo may have been deleted or never created properly
             return;
         }
         
         Photo photo = photoOpt.get();
+        
+        // Log current status for debugging
+        log.info("Found photo: photoId={}, currentStatus={}, jobId={}", 
+            photo.getPhotoId(), photo.getStatus(), photo.getJobId());
         
         // Idempotency check: skip if already completed
         if (photo.getStatus() == PhotoStatus.COMPLETED) {
@@ -111,6 +118,7 @@ public class PhotoProcessingService {
             // Mark as processing
             photo.markProcessing(s3Key, bucket, etag);
             photoRepository.save(photo);
+            log.debug("Marked photo as PROCESSING: photoId={}", photo.getPhotoId());
             
             // Download image from S3
             byte[] imageBytes = downloadFromS3(s3Key);
